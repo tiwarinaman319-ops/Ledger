@@ -1,11 +1,13 @@
 # 💎 Ledger — Next-Gen Personal Wealth & Financial Operating System
 
+[![Live Demo on Vercel](https://img.shields.io/badge/Live%20Demo-ledger--seven--phi.vercel.app-10b981?style=for-the-badge&logo=vercel)](https://ledger-seven-phi.vercel.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
 [![Platform: Web](https://img.shields.io/badge/Platform-Web%20SPA-6366f1.svg)]()
 [![Forex Engine](https://img.shields.io/badge/Forex-Multi--Currency%20Engine-06b6d4.svg)]()
 [![AI Financial Copilot](https://img.shields.io/badge/AI-Financial%20Advisor-8b5cf6.svg)]()
-[![Status: Production Ready](https://img.shields.io/badge/Status-Production%20Ready-10b981.svg)]()
 
+> 🚀 **Live Production URL**: **[https://ledger-seven-phi.vercel.app](https://ledger-seven-phi.vercel.app)**
+>
 > **Ledger** is a high-performance personal wealth management platform and financial operating system. Designed with an ultra-sleek glassmorphic dark-mode interface, real-time mathematical multi-currency conversion, macro currency fluctuation analytics, interactive AI financial advising, fixed overhead tracking, receipt attachments, and pro wealth calculators.
 
 ---
