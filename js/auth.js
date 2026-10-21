@@ -59,6 +59,8 @@ function populateSampleDataForUser(email) {
 
   const mockExpenses = [
     // Current Month
+    { id: "demo-fam-1", description: "Monthly Family Contribution", amount: 600.00, category: "cat_family", date: `${y}-${m}-03`, payMethod: "pay_online", recipient: "Parents", notes: "Home allowance & support" },
+    { id: "demo-rent-1", description: "Apartment Rent & Housing", amount: 1100.00, category: "cat_rent", date: `${y}-${m}-01`, payMethod: "pay_bank", notes: "Monthly apartment lease" },
     { id: "demo-1", description: "Organic Grocery Haul", amount: 164.20, category: "cat_food", date: `${y}-${m}-02`, payMethod: "pay_card", notes: "Whole Foods weekly stock", receipt: sampleReceiptSvg },
     { id: "demo-2", description: "Fiber High-Speed Internet", amount: 79.99, category: "cat_bills", date: `${y}-${m}-04`, payMethod: "pay_online", notes: "Monthly gigabit plan" },
     { id: "demo-3", description: "City Metro & Subway Pass", amount: 65.00, category: "cat_transport", date: `${y}-${m}-06`, payMethod: "pay_card", notes: "Monthly commuter pass" },
@@ -71,6 +73,8 @@ function populateSampleDataForUser(email) {
     { id: "demo-10", description: "Designer Notebooks & Fountain Pens", amount: 28.50, category: "cat_stationery", date: `${y}-${m}-20`, payMethod: "pay_cash", notes: "Desk stationery" },
 
     // Previous Month 1
+    { id: "demo-fam-2", description: "Money Given to Parents", amount: 600.00, category: "cat_family", date: `${p1y}-${p1m}-03`, payMethod: "pay_online", recipient: "Parents" },
+    { id: "demo-rent-2", description: "Apartment Rent & Housing", amount: 1100.00, category: "cat_rent", date: `${p1y}-${p1m}-01`, payMethod: "pay_bank" },
     { id: "demo-11", description: "Supermarket Groceries", amount: 185.00, category: "cat_food", date: `${p1y}-${p1m}-05`, payMethod: "pay_card" },
     { id: "demo-12", description: "Apartment Energy Bill", amount: 98.20, category: "cat_bills", date: `${p1y}-${p1m}-12`, payMethod: "pay_online" },
     { id: "demo-13", description: "Dining Out & Cocktails", amount: 88.00, category: "cat_food", date: `${p1y}-${p1m}-15`, payMethod: "pay_card" },
@@ -79,11 +83,19 @@ function populateSampleDataForUser(email) {
     { id: "demo-16", description: "Dentist Routine Checkup", amount: 150.00, category: "cat_health", date: `${p1y}-${p1m}-26`, payMethod: "pay_card" },
 
     // Previous Month 2
+    { id: "demo-fam-3", description: "Family Support Contribution", amount: 600.00, category: "cat_family", date: `${p2y}-${p2m}-03`, payMethod: "pay_online", recipient: "Parents" },
+    { id: "demo-rent-3", description: "Apartment Rent & Housing", amount: 1100.00, category: "cat_rent", date: `${p2y}-${p2m}-01`, payMethod: "pay_bank" },
     { id: "demo-17", description: "Fresh Market Supplies", amount: 210.00, category: "cat_food", date: `${p2y}-${p2m}-03`, payMethod: "pay_card" },
     { id: "demo-18", description: "Water & Power Utility", amount: 104.50, category: "cat_bills", date: `${p2y}-${p2m}-10`, payMethod: "pay_bank" },
     { id: "demo-19", description: "Books & Learning Course", amount: 75.00, category: "cat_education", date: `${p2y}-${p2m}-14`, payMethod: "pay_online" },
     { id: "demo-20", description: "Weekend Road Trip Fuel", amount: 68.00, category: "cat_transport", date: `${p2y}-${p2m}-21`, payMethod: "pay_card" },
     { id: "demo-21", description: "Casual Dining & Takeout", amount: 92.00, category: "cat_food", date: `${p2y}-${p2m}-28`, payMethod: "pay_cash" },
+  ];
+
+  const mockIncomes = [
+    { id: "inc-1", source: "Primary Tech Salary", amount: 5200, category: "inc_salary", date: `${y}-${m}-01`, status: "received", isRecurring: true, notes: "Monthly direct deposit" },
+    { id: "inc-2", source: "Primary Tech Salary", amount: 5200, category: "inc_salary", date: `${p1y}-${p1m}-01`, status: "received", isRecurring: true },
+    { id: "inc-3", source: "Primary Tech Salary", amount: 5200, category: "inc_salary", date: `${p2y}-${p2m}-01`, status: "received", isRecurring: true },
   ];
 
   const mockGoals = [
@@ -122,9 +134,15 @@ function populateSampleDataForUser(email) {
 
   localStorage.setItem(targetDataKey, JSON.stringify({
     income: 5200,
+    openingBalance: 1500,
+    incomes: mockIncomes,
     expenses: mockExpenses,
     goals: mockGoals,
     subscriptions: mockSubs,
+    budgets: {
+      overall: 4000,
+      categories: { cat_family: 700, cat_food: 600, cat_rent: 1200 }
+    }
   }));
 
   return targetEmail;

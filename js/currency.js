@@ -43,12 +43,23 @@ function setCurrency(code) {
 }
 
 /**
+ * Precision-safe rounding to prevent IEEE 754 floating point distortion (e.g. 0.1 + 0.2 != 0.3)
+ */
+function roundMoney(num, decimals = 2) {
+  if (typeof num !== "number" || isNaN(num)) return 0;
+  const factor = Math.pow(10, decimals);
+  return Math.round((num + Number.EPSILON) * factor) / factor;
+}
+
+/**
  * Converts a base USD amount into the target currency (defaults to active currency).
  */
 function convertFromBase(amountInUSD, targetCode = null) {
   const code = targetCode || getCurrency().code;
+  if (code === BASE_CURRENCY) return roundMoney(Number(amountInUSD) || 0, 2);
   const rate = getExchangeRate(code);
-  return (Number(amountInUSD) || 0) * rate;
+  const result = (Number(amountInUSD) || 0) * rate;
+  return roundMoney(result, code === "JPY" ? 0 : 2);
 }
 
 /**
@@ -56,9 +67,10 @@ function convertFromBase(amountInUSD, targetCode = null) {
  */
 function convertToBase(amountInCurrency, sourceCode = null) {
   const code = sourceCode || getCurrency().code;
+  if (code === BASE_CURRENCY) return roundMoney(Number(amountInCurrency) || 0, 2);
   const rate = getExchangeRate(code);
-  if (!rate || rate <= 0) return Number(amountInCurrency) || 0;
-  return (Number(amountInCurrency) || 0) / rate;
+  if (!rate || rate <= 0) return roundMoney(Number(amountInCurrency) || 0, 2);
+  return roundMoney((Number(amountInCurrency) || 0) / rate, 4);
 }
 
 /**
@@ -316,6 +328,7 @@ window.fmtMoney = fmtMoney;
 window.refreshMarketRates = refreshMarketRates;
 window.getRatesLastUpdatedText = getRatesLastUpdatedText;
 window.getCurrencyTrendData = getCurrencyTrendData;
+window.roundMoney = roundMoney;
 window.openForexTrendsModal = openForexTrendsModal;
 window.closeForexTrendsModal = closeForexTrendsModal;
 

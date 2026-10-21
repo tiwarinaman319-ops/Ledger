@@ -1,12 +1,38 @@
 const CATEGORIES = [
+  "cat_family", "cat_parents", "cat_family_support", "cat_household", "cat_rent", "cat_groceries_bills",
   "cat_food", "cat_bills", "cat_transport", "cat_entertainment",
   "cat_clothing", "cat_shoes", "cat_stationery", "cat_health",
   "cat_shopping", "cat_education", "cat_travel", "cat_investments", "cat_other",
 ];
 
+const FAMILY_CATEGORIES = [
+  "cat_family",
+  "cat_parents",
+  "cat_family_support",
+  "cat_household",
+  "cat_rent",
+  "cat_groceries_bills",
+];
+
+const INCOME_CATEGORIES = [
+  "inc_salary",
+  "inc_freelance",
+  "inc_business",
+  "inc_investments",
+  "inc_other",
+];
+
+// Dashboard Timeframe State
+let dashSelectedTimeframe = "month";
+let dashCustomStart = "";
+let dashCustomEnd = "";
+
+// Expenses Section Filter & Sort State
 let expenseFilterQuery = "";
 let expenseFilterCat = "all";
-let expenseFilterTime = "all";
+let expenseFilterTime = "month";
+let expenseCustomStart = "";
+let expenseCustomEnd = "";
 let expenseSortOrder = "newest";
 
 function currentUserEmail() {
@@ -70,7 +96,7 @@ const sampleReceiptSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/
 function getData() {
   try {
     const raw = localStorage.getItem(dataKey());
-    if (!raw) return { income: 0, expenses: [], goals: [], subscriptions: getDefaultSubscriptions() };
+    if (!raw) return { income: 0, openingBalance: 0, incomes: [], expenses: [], goals: [], subscriptions: getDefaultSubscriptions() };
     const parsed = JSON.parse(raw);
     let subs = Array.isArray(parsed.subscriptions) ? parsed.subscriptions : null;
     if (!subs) {
@@ -80,14 +106,17 @@ function getData() {
     if (expenses.length > 0 && !expenses.some((e) => e.receipt)) {
       expenses[0].receipt = sampleReceiptSvg;
     }
+    const incomes = Array.isArray(parsed.incomes) ? parsed.incomes : [];
     return {
       income: parsed.income || 0,
+      openingBalance: Number(parsed.openingBalance) || 0,
+      incomes,
       expenses,
       goals: Array.isArray(parsed.goals) ? parsed.goals : [],
       subscriptions: subs,
     };
   } catch {
-    return { income: 0, expenses: [], goals: [], subscriptions: getDefaultSubscriptions() };
+    return { income: 0, openingBalance: 0, incomes: [], expenses: [], goals: [], subscriptions: getDefaultSubscriptions() };
   }
 }
 
@@ -110,6 +139,12 @@ function thisMonthKey() {
 
 function categoryEmoji(cat) {
   const map = {
+    cat_family: "🏡",
+    cat_parents: "👨‍👩‍👧",
+    cat_family_support: "🤝",
+    cat_household: "🏠",
+    cat_rent: "🏢",
+    cat_groceries_bills: "🛒",
     cat_food: "🍔",
     cat_bills: "💡",
     cat_transport: "🚌",
@@ -131,8 +166,8 @@ function paymentMethodBadge(method) {
   const map = {
     pay_card: { label: "Card", icon: "💳" },
     pay_cash: { label: "Cash", icon: "💵" },
-    pay_online: { label: "Online", icon: "⚡" },
-    pay_bank: { label: "Bank", icon: "🏦" },
+    pay_online: { label: "UPI / Online", icon: "⚡" },
+    pay_bank: { label: "Bank Transfer", icon: "🏦" },
   };
   const m = map[method] || map.pay_card;
   return `<span class="pay-method-badge">${m.icon} ${m.label}</span>`;
@@ -190,51 +225,339 @@ function handleHashNavigation() {
   }
 }
 
-/* ===================== DASHBOARD ===================== */
-function computeTotals(data) {
-  const mKey = thisMonthKey();
-  const monthExpenses = (data.expenses || []).filter((e) => monthKey(e.date) === mKey);
-  const totalExpenses = monthExpenses.reduce((s, e) => s + Number(e.amount), 0);
-  const savings = Math.max(0, Number(data.income) - totalExpenses);
-  return { totalExpenses, savings, monthExpenses };
+/* ===================== FINANCIAL COMPUTATIONS & PERIODS ===================== */
+function isDateInPeriod(dateStr, timeframe, customStart = "", customEnd = "") {
+  if (!dateStr) return false;
+  const now = new Date();
+  const curY = now.getFullYear();
+  const curM = now.getMonth();
+  const pad = (n) => String(n).padStart(2, "0");
+  const todayStr = `${curY}-${pad(curM + 1)}-${pad(now.getDate())}`;
+
+  if (timeframe === "today") {
+    return dateStr.slice(0, 10) === todayStr;
+  }
+  if (timeframe === "week") {
+    const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; // 0 for Monday
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - dayOfWeek);
+    const mondayStr = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const sundayStr = `${sunday.getFullYear()}-${pad(sunday.getMonth() + 1)}-${pad(sunday.getDate())}`;
+    return dateStr >= mondayStr && dateStr <= sundayStr;
+  }
+  if (timeframe === "month") {
+    const mStr = `${curY}-${pad(curM + 1)}`;
+    return dateStr.startsWith(mStr);
+  }
+  if (timeframe === "last_month") {
+    const lastM = curM === 0 ? 12 : curM;
+    const lastY = curM === 0 ? curY - 1 : curY;
+    const lmStr = `${lastY}-${pad(lastM)}`;
+    return dateStr.startsWith(lmStr);
+  }
+  if (timeframe === "year") {
+    return dateStr.startsWith(`${curY}-`);
+  }
+  if (timeframe === "custom") {
+    if (customStart && dateStr < customStart) return false;
+    if (customEnd && dateStr > customEnd) return false;
+    return true;
+  }
+  return true; // 'all'
 }
 
+function computePeriodFinancials(data, timeframe = "month", customStart = "", customEnd = "") {
+  const incomes = Array.isArray(data.incomes) ? data.incomes : [];
+  const expenses = Array.isArray(data.expenses) ? data.expenses : [];
+  const openingBalance = typeof roundMoney === "function" ? roundMoney(Number(data.openingBalance) || 0, 2) : Number(data.openingBalance) || 0;
+
+  // 1. Period Income
+  const periodIncomes = incomes.filter(
+    (inc) => inc.status !== "scheduled" && isDateInPeriod(inc.date, timeframe, customStart, customEnd)
+  );
+
+  let periodIncome = 0;
+  if (periodIncomes.length > 0) {
+    periodIncome = periodIncomes.reduce((s, inc) => s + Number(inc.amount || 0), 0);
+  } else if (Number(data.income) > 0) {
+    const baseIncome = Number(data.income);
+    if (timeframe === "month" || timeframe === "last_month") {
+      periodIncome = baseIncome;
+    } else if (timeframe === "year") {
+      periodIncome = baseIncome * 12;
+    } else if (timeframe === "today") {
+      periodIncome = baseIncome / 30;
+    } else if (timeframe === "week") {
+      periodIncome = (baseIncome / 30) * 7;
+    } else {
+      periodIncome = baseIncome;
+    }
+  }
+  periodIncome = typeof roundMoney === "function" ? roundMoney(periodIncome, 2) : Math.round(periodIncome * 100) / 100;
+
+  // 2. Period Expenses (Internal transfers do not count as expenses!)
+  const periodExpensesList = expenses.filter(
+    (e) => e.transactionType !== "transfer" && isDateInPeriod(e.date, timeframe, customStart, customEnd)
+  );
+
+  let periodExpenses = periodExpensesList.reduce((s, e) => s + Number(e.amount || 0), 0);
+  periodExpenses = typeof roundMoney === "function" ? roundMoney(periodExpenses, 2) : Math.round(periodExpenses * 100) / 100;
+
+  // 3. Category Breakdown
+  const byCategory = {};
+  periodExpensesList.forEach((e) => {
+    byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount || 0);
+  });
+  for (const cat in byCategory) {
+    byCategory[cat] = typeof roundMoney === "function" ? roundMoney(byCategory[cat], 2) : Math.round(byCategory[cat] * 100) / 100;
+  }
+
+  // 4. Family Contributions
+  const familyExpenses = periodExpensesList.filter(
+    (e) => e.transactionType === "family_contribution" || FAMILY_CATEGORIES.includes(e.category)
+  );
+  let familyContribution = familyExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+  familyContribution = typeof roundMoney === "function" ? roundMoney(familyContribution, 2) : Math.round(familyContribution * 100) / 100;
+
+  // 5. Net Surplus, Remaining, and Percentages
+  const remainingBalance = typeof roundMoney === "function" ? roundMoney(periodIncome - periodExpenses, 2) : Math.round((periodIncome - periodExpenses) * 100) / 100;
+  const periodSavings = Math.max(0, remainingBalance);
+  const spendingPct = periodIncome > 0 ? (typeof roundMoney === "function" ? roundMoney((periodExpenses / periodIncome) * 100, 1) : Math.round((periodExpenses / periodIncome) * 100)) : 0;
+  const familyContributionPct = periodIncome > 0 ? (typeof roundMoney === "function" ? roundMoney((familyContribution / periodIncome) * 100, 1) : Math.round((familyContribution / periodIncome) * 100)) : 0;
+
+  // 6. All-Time Recorded Net Account Balance (Distinct from period balance!)
+  const allTimeReceivedIncomes = incomes.filter((inc) => inc.status !== "scheduled");
+  let allTimeIncome = 0;
+  if (allTimeReceivedIncomes.length > 0) {
+    allTimeIncome = allTimeReceivedIncomes.reduce((s, inc) => s + Number(inc.amount || 0), 0);
+  } else {
+    allTimeIncome = Number(data.income) || 0;
+  }
+  const allTimeExpenses = expenses
+    .filter((e) => e.transactionType !== "transfer")
+    .reduce((s, e) => s + Number(e.amount || 0), 0);
+
+  const netAccountBalance = typeof roundMoney === "function"
+    ? roundMoney(openingBalance + allTimeIncome - allTimeExpenses, 2)
+    : Math.round((openingBalance + allTimeIncome - allTimeExpenses) * 100) / 100;
+
+  return {
+    periodIncome,
+    periodExpenses,
+    periodSavings,
+    remainingBalance,
+    spendingPct,
+    familyContribution,
+    familyContributionPct,
+    byCategory,
+    periodExpensesList,
+    openingBalance,
+    netAccountBalance,
+    allTimeIncome,
+    allTimeExpenses,
+  };
+}
+
+function computeTotals(data) {
+  return computePeriodFinancials(data, dashSelectedTimeframe, dashCustomStart, dashCustomEnd);
+}
+
+/* ===================== CONFIRMATION DIALOG ===================== */
+function showDeleteConfirmation(title, message, onConfirm) {
+  const modal = document.getElementById("confirmDeleteModal");
+  if (!modal) {
+    if (confirm(message)) onConfirm();
+    return;
+  }
+  const titleEl = document.getElementById("confirmDeleteTitle");
+  const msgEl = document.getElementById("confirmDeleteMsg");
+  const cancelBtn = document.getElementById("confirmDeleteCancelBtn");
+  const confirmBtn = document.getElementById("confirmDeleteActionBtn");
+
+  if (titleEl) titleEl.textContent = title;
+  if (msgEl) msgEl.textContent = message;
+
+  modal.classList.remove("hidden");
+
+  const cleanup = () => {
+    modal.classList.add("hidden");
+    const newConfirm = confirmBtn.cloneNode(true);
+    const newCancel = cancelBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+    cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+  };
+
+  cancelBtn.onclick = cleanup;
+  confirmBtn.onclick = () => {
+    cleanup();
+    onConfirm();
+  };
+}
+
+/* ===================== DASHBOARD ===================== */
 function renderDashboard() {
   const data = getData();
-  const { totalExpenses, savings, monthExpenses } = computeTotals(data);
+  const fin = computePeriodFinancials(data, dashSelectedTimeframe, dashCustomStart, dashCustomEnd);
 
-  // Income, Expenses, Savings numbers
+  // Timeframe Label
+  const periodLabelMap = {
+    today: t("filter_time_today") || "Today",
+    week: t("filter_time_week") || "This Week",
+    month: t("filter_time_month") || "This Month",
+    last_month: t("filter_time_prev_month") || "Previous Month",
+    year: t("filter_time_year") || "This Year",
+    all: t("filter_time_all") || "All Time",
+    custom: t("filter_time_custom") || "Custom Range",
+  };
+  const periodLabelEl = document.getElementById("dashPeriodLabel");
+  if (periodLabelEl) {
+    periodLabelEl.textContent = periodLabelMap[dashSelectedTimeframe] || "This Month";
+  }
+
+  // 1. Total Income
   const incomeEl = document.getElementById("dashIncome");
+  if (incomeEl) incomeEl.textContent = fmtMoney(fin.periodIncome);
+
+  // 2. Total Expenses
   const expEl = document.getElementById("dashExpenses");
+  if (expEl) expEl.textContent = fmtMoney(fin.periodExpenses);
+
+  // 3. Remaining Balance & Spending Pct
+  const remEl = document.getElementById("dashRemaining");
+  if (remEl) {
+    remEl.textContent = fmtMoney(fin.remainingBalance);
+    remEl.style.color = fin.remainingBalance >= 0 ? "var(--cyan)" : "var(--rose)";
+  }
+  const spendPctEl = document.getElementById("dashSpendingPct");
+  if (spendPctEl) {
+    spendPctEl.textContent = fin.periodIncome > 0 ? `${fin.spendingPct}%` : "—";
+  }
+
+  // 4. Recorded Net Account Balance (Distinct from Period Balance)
+  const netEl = document.getElementById("dashRecordedNet");
+  if (netEl) {
+    netEl.textContent = fmtMoney(fin.netAccountBalance);
+    netEl.style.color = fin.netAccountBalance >= 0 ? "var(--emerald)" : "var(--rose)";
+  }
+  const openBalSub = document.getElementById("dashOpeningBalanceSub");
+  if (openBalSub) {
+    openBalSub.textContent = `Opening Balance: ${fmtMoney(fin.openingBalance)}`;
+  }
+
+  // Savings Summary / Active Goals Target
   const savEl = document.getElementById("dashSavings");
+  if (savEl) savEl.textContent = fmtMoney(fin.periodSavings);
+
   const goalTotalEl = document.getElementById("dashGoalTotal");
-
-  if (incomeEl) incomeEl.textContent = fmtMoney(data.income);
-  if (expEl) expEl.textContent = fmtMoney(totalExpenses);
-  if (savEl) savEl.textContent = fmtMoney(savings);
-
-  // Total saved in active goals
   if (goalTotalEl) {
     const goalsSaved = (data.goals || []).reduce((acc, g) => acc + Number(g.saved || 0), 0);
     const goalsTarget = (data.goals || []).reduce((acc, g) => acc + Number(g.target || 0), 0);
     goalTotalEl.textContent = `${fmtMoney(goalsSaved)} / ${fmtMoney(goalsTarget)}`;
   }
 
-  // Update Monthly Budget Pace & Velocity Widget
-  renderBudgetPace(data, totalExpenses);
+  // Family Contribution Highlight Banner
+  const familyBanner = document.getElementById("dashFamilyBanner");
+  const familyAmtEl = document.getElementById("dashFamilyAmt") || document.getElementById("dashFamilyContribAmt");
+  const familyPctEl = document.getElementById("dashFamilyPct") || document.getElementById("dashFamilyContribPct");
+  if (familyBanner) {
+    if (fin.familyContribution > 0) {
+      familyBanner.classList.remove("hidden");
+      if (familyAmtEl) familyAmtEl.textContent = fmtMoney(fin.familyContribution);
+      if (familyPctEl) {
+        familyPctEl.textContent = fin.periodIncome > 0
+          ? `${fin.familyContributionPct}% of period income · ${fin.periodExpenses > 0 ? Math.round((fin.familyContribution / fin.periodExpenses) * 100) : 0}% of expenses`
+          : "Recorded family contribution";
+      }
+    } else {
+      familyBanner.classList.add("hidden");
+    }
+  }
 
-  // Update recommendations and recent transactions
-  renderRecommendations(data, totalExpenses, savings);
+  // Salary & Expense Distribution Breakdown Table (Section 4)
+  renderSalaryBreakdownTable(fin);
+
+  // Monthly Budget Pace & Velocity Widget
+  renderBudgetPace(data, fin.periodExpenses, fin.periodIncome);
+
+  // Recommendations and Recent Transactions
+  renderRecommendations(data, fin.periodExpenses, fin.periodSavings);
   if (typeof window.renderAICopilotCard === "function") {
     window.renderAICopilotCard();
   }
   renderRecent(data);
 
-  // Update sidebar mini summary
-  renderSidebarWidget(data, totalExpenses);
+  // Sidebar Mini Summary
+  renderSidebarWidget(data, fin.periodExpenses, fin.periodIncome);
 }
 
-function renderBudgetPace(data, totalExpenses) {
+function renderSalaryBreakdownTable(fin) {
+  const tbody = document.getElementById("salaryBreakdownTableBody");
+  const breakdownPill = document.getElementById("salaryBreakdownPill");
+  if (breakdownPill) {
+    breakdownPill.textContent = "Income: " + fmtMoney(fin.periodIncome);
+  }
+  if (!tbody) return;
+
+  const { periodIncome, periodExpenses, remainingBalance, spendingPct, byCategory } = fin;
+  const categoriesList = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+
+  let rowsHtml = `
+    <tr class="row-income">
+      <td><strong>💼 Salary / Income Received</strong></td>
+      <td><span class="cat-badge" style="background: rgba(16, 185, 129, 0.15); color: var(--emerald);">Income Source</span></td>
+      <td style="text-align: right; font-weight: 800; color: var(--emerald);">+ ${fmtMoney(periodIncome)}</td>
+      <td style="text-align: right; font-weight: 700; color: var(--emerald);">100%</td>
+    </tr>
+  `;
+
+  if (categoriesList.length === 0) {
+    rowsHtml += `
+      <tr>
+        <td colspan="4" style="text-align: center; color: var(--text-dim); padding: 16px;">
+          No expenses recorded in this period.
+        </td>
+      </tr>
+    `;
+  } else {
+    categoriesList.forEach(([cat, amt]) => {
+      const isFamily = FAMILY_CATEGORIES.includes(cat);
+      const pctOfIncome = periodIncome > 0 ? (typeof roundMoney === "function" ? roundMoney((amt / periodIncome) * 100, 1) : Math.round((amt / periodIncome) * 100)) : 0;
+      const badge = isFamily ? `<span style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(99, 102, 241, 0.2); color: var(--indigo); font-weight: 700; margin-left: 6px;">FAMILY</span>` : "";
+
+      rowsHtml += `
+        <tr class="${isFamily ? 'row-family' : ''}">
+          <td><strong>${categoryEmoji(cat)} ${t(cat)}</strong></td>
+          <td><span class="cat-badge">${t(cat)}</span> ${badge}</td>
+          <td style="text-align: right; font-weight: 600;">${fmtMoney(amt)}</td>
+          <td style="text-align: right; font-weight: 600; color: var(--text-dim);">${pctOfIncome}%</td>
+        </tr>
+      `;
+    });
+  }
+
+  const remainingPct = periodIncome > 0 ? (typeof roundMoney === "function" ? roundMoney((remainingBalance / periodIncome) * 100, 1) : Math.round((remainingBalance / periodIncome) * 100)) : 0;
+
+  rowsHtml += `
+    <tr class="row-total-exp">
+      <td><strong>📉 Total Expenses</strong></td>
+      <td><span class="cat-badge" style="background: rgba(244, 63, 94, 0.15); color: var(--rose);">All Spending</span></td>
+      <td style="text-align: right; font-weight: 800; color: var(--rose);">- ${fmtMoney(periodExpenses)}</td>
+      <td style="text-align: right; font-weight: 700; color: var(--rose);">${spendingPct}%</td>
+    </tr>
+    <tr class="row-remaining">
+      <td><strong>🏦 Remaining Balance</strong></td>
+      <td><span class="cat-badge" style="background: rgba(6, 182, 212, 0.15); color: var(--cyan);">Net Surplus</span></td>
+      <td style="text-align: right; font-weight: 800; color: var(--cyan);">= ${fmtMoney(remainingBalance)}</td>
+      <td style="text-align: right; font-weight: 800; color: var(--cyan);">${remainingPct}%</td>
+    </tr>
+  `;
+
+  tbody.innerHTML = rowsHtml;
+}
+
+function renderBudgetPace(data, totalExpenses, periodIncome) {
   const paceBar = document.getElementById("budgetPaceFill");
   const paceText = document.getElementById("budgetPaceText");
   const paceRemaining = document.getElementById("budgetPaceRemaining");
@@ -247,7 +570,7 @@ function renderBudgetPace(data, totalExpenses) {
   const dayOfMonth = now.getDate();
   const daysLeft = Math.max(1, daysInMonth - dayOfMonth);
 
-  const income = Number(data.income) || 0;
+  const income = Number(periodIncome !== undefined ? periodIncome : data.income) || 0;
 
   if (!income) {
     if (paceBar) paceBar.style.width = "0%";
@@ -271,12 +594,12 @@ function renderBudgetPace(data, totalExpenses) {
   if (paceDailySpeed) paceDailySpeed.textContent = `Safe daily spend: ${fmtMoney(dailyAllowance)}/day`;
 }
 
-function renderSidebarWidget(data, totalExpenses) {
+function renderSidebarWidget(data, totalExpenses, periodIncome) {
   const sideSpent = document.getElementById("sidebarMonthSpent");
   const sideIncome = document.getElementById("sidebarMonthIncome");
   const sideBar = document.getElementById("sidebarProgressBar");
 
-  const income = Number(data.income) || 0;
+  const income = Number(periodIncome !== undefined ? periodIncome : data.income) || 0;
   if (sideSpent) sideSpent.textContent = fmtMoney(totalExpenses);
   if (sideIncome) sideIncome.textContent = fmtMoney(income);
 
@@ -325,7 +648,8 @@ function renderRecommendations(data, totalExpenses, savings) {
   }
 
   // Top category this month
-  const { monthExpenses } = computeTotals(data);
+  const mKey = thisMonthKey();
+  const monthExpenses = (data.expenses || []).filter((e) => monthKey(e.date) === mKey && e.transactionType !== "transfer");
   if (monthExpenses.length) {
     const byCat = {};
     monthExpenses.forEach((e) => {
@@ -388,6 +712,15 @@ function renderRecent(data) {
 function entryRowHtml(e, deletable) {
   const payBadge = e.payMethod ? paymentMethodBadge(e.payMethod) : "";
   const notesText = e.notes ? `<span class="entry-notes">"${escapeHtml(e.notes)}"</span>` : "";
+  const recipientBadge = e.recipient ? `<span style="font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(99, 102, 241, 0.15); color: var(--indigo); font-weight: 600;">To: ${escapeHtml(e.recipient)}</span>` : "";
+  const isTransfer = e.transactionType === "transfer";
+  const isFamily = e.transactionType === "family_contribution" || FAMILY_CATEGORIES.includes(e.category);
+  const typeBadge = isTransfer
+    ? `<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(6, 182, 212, 0.15); color: var(--cyan); font-weight: 700;">TRANSFER</span>`
+    : isFamily
+    ? `<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(99, 102, 241, 0.15); color: var(--indigo); font-weight: 700;">FAMILY</span>`
+    : "";
+
   const receiptBtn = e.receipt
     ? `<button type="button" class="receipt-pill-btn" data-view-receipt="${e.id}" title="View Attached Receipt">📎 Receipt</button>`
     : "";
@@ -401,6 +734,8 @@ function entryRowHtml(e, deletable) {
           <div class="entry-sub">
             <span>${e.date}</span> · 
             <span class="cat-badge">${t(e.category)}</span>
+            ${typeBadge}
+            ${recipientBadge}
             ${payBadge}
             ${receiptBtn}
             ${notesText}
@@ -408,7 +743,9 @@ function entryRowHtml(e, deletable) {
         </div>
       </div>
       <div class="entry-right">
-        <div class="entry-amt expense">-${fmtMoney(e.amount)}</div>
+        <div class="entry-amt ${isTransfer ? 'transfer' : 'expense'}" style="${isTransfer ? 'color: var(--cyan);' : ''}">
+          ${isTransfer ? '🔄 ' : '-'}${fmtMoney(e.amount)}
+        </div>
         ${deletable ? `
           <div class="entry-actions">
             <button class="entry-btn-edit" data-edit-exp="${e.id}" title="${t('exp_edit_title')}">
@@ -437,7 +774,69 @@ function renderExpensesSection() {
     }
   }
   renderSubscriptions(data);
+  renderCategoryPills(data.expenses || [], expenseFilterCat);
   renderExpenseList(data);
+}
+
+function renderCategoryPills(expenses, activeCategory) {
+  const wrap = document.getElementById("categoryPillsWrap");
+  if (!wrap) return;
+
+  const nonTransfers = (expenses || []).filter((e) => e.transactionType !== "transfer");
+  const total = nonTransfers.reduce((s, e) => s + Number(e.amount || 0), 0);
+
+  const catMap = {};
+  nonTransfers.forEach((e) => {
+    catMap[e.category] = (catMap[e.category] || 0) + Number(e.amount || 0);
+  });
+
+  const familyTotal = nonTransfers
+    .filter((e) => e.transactionType === "family_contribution" || FAMILY_CATEGORIES.includes(e.category))
+    .reduce((s, e) => s + Number(e.amount || 0), 0);
+
+  let pillsHtml = `
+    <button type="button" class="category-pill-btn ${activeCategory === 'all' ? 'active' : ''}" data-cat-pill="all">
+      <span>🌐 All</span>
+      <span class="pill-amt">${fmtMoney(total)}</span>
+    </button>
+  `;
+
+  if (familyTotal > 0) {
+    const fPct = total > 0 ? Math.round((familyTotal / total) * 100) : 0;
+    pillsHtml += `
+      <button type="button" class="category-pill-btn ${activeCategory === 'family_all' ? 'active' : ''}" data-cat-pill="family_all">
+        <span>🏡 Family Only</span>
+        <span class="pill-amt">${fmtMoney(familyTotal)}</span>
+        <span class="pill-pct">(${fPct}%)</span>
+      </button>
+    `;
+  }
+
+  const sortedCats = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+  sortedCats.forEach(([cat, amt]) => {
+    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+    const isActive = activeCategory === cat;
+    pillsHtml += `
+      <button type="button" class="category-pill-btn ${isActive ? 'active' : ''}" data-cat-pill="${cat}">
+        <span>${categoryEmoji(cat)} ${t(cat)}</span>
+        <span class="pill-amt">${fmtMoney(amt)}</span>
+        <span class="pill-pct">(${pct}%)</span>
+      </button>
+    `;
+  });
+
+  wrap.innerHTML = pillsHtml;
+
+  // Bind click handlers to pills
+  wrap.querySelectorAll("[data-cat-pill]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetCat = btn.dataset.catPill;
+      expenseFilterCat = targetCat;
+      const select = document.getElementById("expenseCategoryFilter");
+      if (select) select.value = targetCat;
+      renderExpensesSection();
+    });
+  });
 }
 
 function filterAndSortExpenses(expenses) {
@@ -449,31 +848,23 @@ function filterAndSortExpenses(expenses) {
     list = list.filter((e) =>
       (e.description || "").toLowerCase().includes(q) ||
       (e.notes || "").toLowerCase().includes(q) ||
+      (e.recipient || "").toLowerCase().includes(q) ||
       t(e.category).toLowerCase().includes(q)
     );
   }
 
   // 2. Category filter
   if (expenseFilterCat && expenseFilterCat !== "all") {
-    list = list.filter((e) => e.category === expenseFilterCat);
+    if (expenseFilterCat === "family_all") {
+      list = list.filter((e) => e.transactionType === "family_contribution" || FAMILY_CATEGORIES.includes(e.category));
+    } else {
+      list = list.filter((e) => e.category === expenseFilterCat);
+    }
   }
 
   // 3. Timeframe filter
-  const now = new Date();
-  const curY = now.getFullYear();
-  const curM = now.getMonth();
-
-  if (expenseFilterTime === "month") {
-    const mStr = `${curY}-${String(curM + 1).padStart(2, "0")}`;
-    list = list.filter((e) => (e.date || "").startsWith(mStr));
-  } else if (expenseFilterTime === "last_month") {
-    const lastM = curM === 0 ? 12 : curM;
-    const lastY = curM === 0 ? curY - 1 : curY;
-    const lmStr = `${lastY}-${String(lastM).padStart(2, "0")}`;
-    list = list.filter((e) => (e.date || "").startsWith(lmStr));
-  } else if (expenseFilterTime === "year") {
-    const yStr = `${curY}-`;
-    list = list.filter((e) => (e.date || "").startsWith(yStr));
+  if (expenseFilterTime && expenseFilterTime !== "all") {
+    list = list.filter((e) => isDateInPeriod(e.date, expenseFilterTime, expenseCustomStart, expenseCustomEnd));
   }
 
   // 4. Sort order
@@ -493,13 +884,20 @@ function filterAndSortExpenses(expenses) {
 function renderExpenseList(data) {
   const container = document.getElementById("expenseList");
   const countEl = document.getElementById("expenseCountSummary");
+  const periodTotalEl = document.getElementById("expensesPeriodTotal");
+  const txCountEl = document.getElementById("expensesTxCount");
   if (!container) return;
 
   const filtered = filterAndSortExpenses(data.expenses || []);
-  const totalFilteredAmt = filtered.reduce((s, e) => s + Number(e.amount), 0);
+  const totalFilteredAmt = filtered
+    .filter((e) => e.transactionType !== "transfer")
+    .reduce((s, e) => s + Number(e.amount), 0);
+
+  if (periodTotalEl) periodTotalEl.textContent = fmtMoney(totalFilteredAmt);
+  if (txCountEl) txCountEl.textContent = `${filtered.length} transactions`;
 
   if (countEl) {
-    countEl.innerHTML = `Showing <strong>${filtered.length}</strong> of <strong>${(data.expenses || []).length}</strong> expenses · Total: <strong>${fmtMoney(totalFilteredAmt)}</strong>`;
+    countEl.innerHTML = `Showing <strong>${filtered.length}</strong> of <strong>${(data.expenses || []).length}</strong> records · Total Outflow: <strong>${fmtMoney(totalFilteredAmt)}</strong>`;
   }
 
   if (!filtered.length) {
@@ -509,15 +907,27 @@ function renderExpenseList(data) {
 
   container.innerHTML = filtered.map((e) => entryRowHtml(e, true)).join("");
 
-  // Bind Delete buttons
+  // Bind Delete buttons with confirmation dialog
   container.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      const id = btn.dataset.del;
       const d = getData();
-      d.expenses = d.expenses.filter((e) => e.id !== btn.dataset.del);
-      saveData(d);
-      renderExpenseList(d);
-      renderDashboard();
-      if (window.renderCharts) window.renderCharts();
+      const exp = (d.expenses || []).find((e) => e.id === id);
+      const desc = exp ? exp.description : "this transaction";
+      const amt = exp ? fmtMoney(exp.amount) : "";
+
+      showDeleteConfirmation(
+        t("confirm_delete_title") || "Confirm Deletion",
+        `Are you sure you want to delete "${desc}" (${amt})? This action cannot be undone.`,
+        () => {
+          const fresh = getData();
+          fresh.expenses = (fresh.expenses || []).filter((e) => e.id !== id);
+          saveData(fresh);
+          renderExpensesSection();
+          renderDashboard();
+          if (window.renderCharts) window.renderCharts();
+        }
+      );
     });
   });
 
@@ -549,12 +959,22 @@ function openEditExpenseModal(id) {
   const converted = typeof convertFromBase === "function" ? convertFromBase(exp.amount) : exp.amount;
 
   document.getElementById("editExpId").value = exp.id;
-  document.getElementById("editExpDesc").value = exp.description;
+  document.getElementById("editExpDesc").value = exp.description || "";
   document.getElementById("editExpAmount").value = cur.code === "JPY" ? Math.round(converted) : Number(converted.toFixed(2));
-  document.getElementById("editExpCategory").value = exp.category;
-  document.getElementById("editExpDate").value = exp.date;
+  document.getElementById("editExpCategory").value = exp.category || "cat_food";
+  document.getElementById("editExpDate").value = exp.date || "";
   document.getElementById("editExpPayMethod").value = exp.payMethod || "pay_card";
   document.getElementById("editExpNotes").value = exp.notes || "";
+
+  const txTypeSelect = document.getElementById("editExpTransactionType");
+  if (txTypeSelect) {
+    txTypeSelect.value = exp.transactionType || (FAMILY_CATEGORIES.includes(exp.category) ? "family_contribution" : "expense");
+  }
+
+  const recipientInput = document.getElementById("editExpRecipient");
+  if (recipientInput) {
+    recipientInput.value = exp.recipient || "";
+  }
 
   // Receipt preview in edit modal
   currentEditReceiptBase64 = exp.receipt || null;
@@ -1288,18 +1708,22 @@ document.addEventListener("DOMContentLoaded", () => {
   const clearDataBtn = document.getElementById("clearDataBtn");
   if (clearDataBtn) {
     clearDataBtn.addEventListener("click", () => {
-      const ok = window.confirm(t("settings_clear_confirm"));
-      if (!ok) return;
-      saveData({ income: 0, expenses: [], goals: [] });
-      renderDashboard();
-      renderExpensesSection();
-      renderGoals();
-      if (window.renderCharts) window.renderCharts();
-      const toast = document.getElementById("settingsToast");
-      if (toast) {
-        toast.textContent = t("settings_cleared");
-        setTimeout(() => { toast.textContent = ""; }, 3000);
-      }
+      showDeleteConfirmation(
+        t("settings_clear_data") || "Clear All Data",
+        t("settings_clear_confirm") || "Are you sure you want to clear all data? This cannot be undone.",
+        () => {
+          saveData({ income: 0, openingBalance: 0, incomes: [], expenses: [], goals: [], subscriptions: getDefaultSubscriptions() });
+          renderDashboard();
+          renderExpensesSection();
+          renderGoals();
+          if (window.renderCharts) window.renderCharts();
+          const toast = document.getElementById("settingsToast");
+          if (toast) {
+            toast.textContent = t("settings_cleared");
+            setTimeout(() => { toast.textContent = ""; }, 3000);
+          }
+        }
+      );
     });
   }
 
@@ -1307,7 +1731,123 @@ document.addEventListener("DOMContentLoaded", () => {
   const dateInput = document.getElementById("expDate");
   if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
 
-  // Save Income Button
+  // Dashboard Timeframe Filter Bar
+  const dashTimeframeBar = document.getElementById("dashTimeframeBar");
+  const dashCustomRangeWrap = document.getElementById("dashCustomRangeWrap");
+  if (dashTimeframeBar) {
+    dashTimeframeBar.querySelectorAll("[data-dash-time], [data-dash-timeframe]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        dashTimeframeBar.querySelectorAll("[data-dash-time], [data-dash-timeframe]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        dashSelectedTimeframe = btn.dataset.dashTime || btn.dataset.dashTimeframe;
+
+        if (dashSelectedTimeframe === "custom") {
+          if (dashCustomRangeWrap) dashCustomRangeWrap.classList.remove("hidden");
+        } else {
+          if (dashCustomRangeWrap) dashCustomRangeWrap.classList.add("hidden");
+          renderDashboard();
+        }
+      });
+    });
+  }
+
+  const dashCustomApplyBtn = document.getElementById("dashApplyCustomBtn") || document.getElementById("dashCustomApplyBtn");
+  if (dashCustomApplyBtn) {
+    dashCustomApplyBtn.addEventListener("click", () => {
+      dashCustomStart = document.getElementById("dashCustomStart") ? document.getElementById("dashCustomStart").value : "";
+      dashCustomEnd = document.getElementById("dashCustomEnd") ? document.getElementById("dashCustomEnd").value : "";
+      renderDashboard();
+    });
+  }
+
+  // Dashboard Family Banner "Filter Family" Button
+  const dashViewFamilyBtn = document.getElementById("dashViewFamilyBtn");
+  if (dashViewFamilyBtn) {
+    dashViewFamilyBtn.addEventListener("click", () => {
+      expenseFilterCat = "family_all";
+      switchSection("expenses");
+      const catSelect = document.getElementById("expenseCategoryFilter");
+      if (catSelect) catSelect.value = "family_all";
+      renderExpensesSection();
+    });
+  }
+
+  // Add Income Modal Handlers
+  const addIncomeModal = document.getElementById("addIncomeModal");
+  const openAddIncomeBtn = document.getElementById("openAddIncomeBtn");
+  const dashAddIncomeBtn = document.getElementById("dashAddIncomeBtn");
+  const closeIncomeModalBtn = document.getElementById("closeIncomeModalBtn");
+  const cancelIncomeBtn = document.getElementById("cancelIncomeBtn");
+  const incomeDateInput = document.getElementById("incomeDate");
+
+  function openIncomeModal() {
+    if (!addIncomeModal) return;
+    const form = document.getElementById("incomeForm");
+    if (form) form.reset();
+    if (incomeDateInput) incomeDateInput.value = new Date().toISOString().slice(0, 10);
+    addIncomeModal.classList.remove("hidden");
+  }
+
+  function closeIncomeModal() {
+    if (addIncomeModal) addIncomeModal.classList.add("hidden");
+  }
+
+  if (openAddIncomeBtn) openAddIncomeBtn.addEventListener("click", openIncomeModal);
+  if (dashAddIncomeBtn) dashAddIncomeBtn.addEventListener("click", openIncomeModal);
+  if (closeIncomeModalBtn) closeIncomeModalBtn.addEventListener("click", closeIncomeModal);
+  if (cancelIncomeBtn) cancelIncomeBtn.addEventListener("click", closeIncomeModal);
+
+  // Income Form Submission with Duplicate Submission Prevention
+  const incomeForm = document.getElementById("incomeForm");
+  const saveIncomeSubmitBtn = document.getElementById("saveIncomeSubmitBtn");
+  if (incomeForm) {
+    incomeForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (saveIncomeSubmitBtn) saveIncomeSubmitBtn.disabled = true;
+
+      const source = document.getElementById("incomeSource").value.trim();
+      const rawAmount = Number(document.getElementById("incomeAmount").value);
+      const amount = typeof convertToBase === "function" ? convertToBase(rawAmount) : rawAmount;
+      const category = document.getElementById("incomeCategory").value;
+      const status = document.getElementById("incomeStatus").value;
+      const date = document.getElementById("incomeDate").value;
+      const payMethod = document.getElementById("incomePayMethod").value;
+      const notes = document.getElementById("incomeNotes") ? document.getElementById("incomeNotes").value.trim() : "";
+
+      if (!source || !rawAmount || rawAmount <= 0 || !date) {
+        if (saveIncomeSubmitBtn) saveIncomeSubmitBtn.disabled = false;
+        return;
+      }
+
+      const d = getData();
+      if (!Array.isArray(d.incomes)) d.incomes = [];
+      d.incomes.push({
+        id: uid(),
+        source,
+        amount,
+        category,
+        status,
+        date,
+        payMethod,
+        notes,
+      });
+
+      // If status is received and it's salary or no income was set, update baseline income
+      if (status === "received" && (category === "inc_salary" || !d.income)) {
+        d.income = amount;
+      }
+
+      saveData(d);
+      closeIncomeModal();
+      if (saveIncomeSubmitBtn) saveIncomeSubmitBtn.disabled = false;
+
+      renderDashboard();
+      renderExpensesSection();
+      if (window.renderCharts) window.renderCharts();
+    });
+  }
+
+  // Save Income Button (Existing Settings/Expenses Quick Save)
   const saveIncomeBtn = document.getElementById("saveIncomeBtn");
   if (saveIncomeBtn) {
     saveIncomeBtn.addEventListener("click", () => {
@@ -1325,11 +1865,33 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Add Expense Form
+  // Opening Balance Setting in Settings Section
+  const settingsOpeningBalance = document.getElementById("settingsOpeningBalance");
+  const saveOpeningBalanceBtn = document.getElementById("saveOpeningBalanceBtn");
+  if (settingsOpeningBalance) {
+    const curData = getData();
+    settingsOpeningBalance.value = curData.openingBalance || "";
+  }
+  if (saveOpeningBalanceBtn) {
+    saveOpeningBalanceBtn.addEventListener("click", () => {
+      const rawVal = Number(document.getElementById("settingsOpeningBalance").value) || 0;
+      const d = getData();
+      d.openingBalance = typeof convertToBase === "function" ? convertToBase(rawVal) : rawVal;
+      saveData(d);
+      renderDashboard();
+      saveOpeningBalanceBtn.textContent = "Saved ✓";
+      setTimeout(() => { saveOpeningBalanceBtn.textContent = "Save"; }, 2000);
+    });
+  }
+
+  // Add Expense Form with Duplicate Submission Prevention
   const expenseForm = document.getElementById("expenseForm");
+  const addExpenseSubmitBtn = expenseForm ? expenseForm.querySelector("button[type='submit']") : null;
   if (expenseForm) {
     expenseForm.addEventListener("submit", (e) => {
       e.preventDefault();
+      if (addExpenseSubmitBtn) addExpenseSubmitBtn.disabled = true;
+
       const desc = document.getElementById("expDesc").value.trim();
       const rawAmount = Number(document.getElementById("expAmount").value);
       const amount = typeof convertToBase === "function" ? convertToBase(rawAmount) : rawAmount;
@@ -1337,8 +1899,15 @@ document.addEventListener("DOMContentLoaded", () => {
       const date = document.getElementById("expDate").value;
       const payMethod = document.getElementById("expPayMethod") ? document.getElementById("expPayMethod").value : "pay_card";
       const notes = document.getElementById("expNotes") ? document.getElementById("expNotes").value.trim() : "";
+      const txTypeSelect = document.getElementById("expTransactionType");
+      const transactionType = txTypeSelect ? txTypeSelect.value : (FAMILY_CATEGORIES.includes(category) ? "family_contribution" : "expense");
+      const recipientInput = document.getElementById("expRecipient");
+      const recipient = recipientInput ? recipientInput.value.trim() : "";
 
-      if (!desc || !rawAmount || rawAmount <= 0 || !date) return;
+      if (!desc || !rawAmount || rawAmount <= 0 || !date) {
+        if (addExpenseSubmitBtn) addExpenseSubmitBtn.disabled = false;
+        return;
+      }
 
       const d = getData();
       d.expenses.push({
@@ -1349,6 +1918,8 @@ document.addEventListener("DOMContentLoaded", () => {
         date,
         payMethod,
         notes,
+        transactionType,
+        recipient,
         receipt: currentAddReceiptBase64,
       });
       saveData(d);
@@ -1358,8 +1929,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const addThumb = document.getElementById("expReceiptPreviewThumb");
       if (addThumb) addThumb.classList.add("hidden");
       if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
+      if (addExpenseSubmitBtn) addExpenseSubmitBtn.disabled = false;
 
-      renderExpenseList(d);
+      renderExpensesSection();
       renderDashboard();
       if (window.renderCharts) window.renderCharts();
 
@@ -1369,11 +1941,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Edit Expense Form Submit
+  // Edit Expense Form Submit with Duplicate Submission Prevention
   const editExpenseForm = document.getElementById("editExpenseForm");
+  const updateExpenseSubmitBtn = document.getElementById("updateExpenseSubmitBtn");
   if (editExpenseForm) {
     editExpenseForm.addEventListener("submit", (e) => {
       e.preventDefault();
+      if (updateExpenseSubmitBtn) updateExpenseSubmitBtn.disabled = true;
+
       const id = document.getElementById("editExpId").value;
       const desc = document.getElementById("editExpDesc").value.trim();
       const rawAmount = Number(document.getElementById("editExpAmount").value);
@@ -1382,6 +1957,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const date = document.getElementById("editExpDate").value;
       const payMethod = document.getElementById("editExpPayMethod").value;
       const notes = document.getElementById("editExpNotes").value.trim();
+      const txTypeSelect = document.getElementById("editExpTransactionType");
+      const transactionType = txTypeSelect ? txTypeSelect.value : (FAMILY_CATEGORIES.includes(category) ? "family_contribution" : "expense");
+      const recipientInput = document.getElementById("editExpRecipient");
+      const recipient = recipientInput ? recipientInput.value.trim() : "";
 
       const d = getData();
       const exp = (d.expenses || []).find((x) => x.id === id);
@@ -1392,12 +1971,16 @@ document.addEventListener("DOMContentLoaded", () => {
         exp.date = date;
         exp.payMethod = payMethod;
         exp.notes = notes;
+        exp.transactionType = transactionType;
+        exp.recipient = recipient;
         exp.receipt = currentEditReceiptBase64;
         saveData(d);
       }
 
       closeEditExpenseModal();
-      renderExpenseList(d);
+      if (updateExpenseSubmitBtn) updateExpenseSubmitBtn.disabled = false;
+
+      renderExpensesSection();
       renderDashboard();
       if (window.renderCharts) window.renderCharts();
     });
@@ -1492,15 +2075,30 @@ document.addEventListener("DOMContentLoaded", () => {
   if (catFilterSelect) {
     catFilterSelect.addEventListener("change", (e) => {
       expenseFilterCat = e.target.value;
-      renderExpenseList(getData());
+      renderExpensesSection();
     });
   }
 
   const timeFilterSelect = document.getElementById("expenseTimeFilter");
+  const expenseCustomRangeWrap = document.getElementById("expenseCustomRangeWrap");
   if (timeFilterSelect) {
     timeFilterSelect.addEventListener("change", (e) => {
       expenseFilterTime = e.target.value;
-      renderExpenseList(getData());
+      if (expenseFilterTime === "custom") {
+        if (expenseCustomRangeWrap) expenseCustomRangeWrap.classList.remove("hidden");
+      } else {
+        if (expenseCustomRangeWrap) expenseCustomRangeWrap.classList.add("hidden");
+        renderExpensesSection();
+      }
+    });
+  }
+
+  const expenseCustomApplyBtn = document.getElementById("expenseCustomApplyBtn");
+  if (expenseCustomApplyBtn) {
+    expenseCustomApplyBtn.addEventListener("click", () => {
+      expenseCustomStart = document.getElementById("expenseCustomStart") ? document.getElementById("expenseCustomStart").value : "";
+      expenseCustomEnd = document.getElementById("expenseCustomEnd") ? document.getElementById("expenseCustomEnd").value : "";
+      renderExpensesSection();
     });
   }
 

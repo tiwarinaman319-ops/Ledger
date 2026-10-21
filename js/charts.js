@@ -18,12 +18,19 @@ const CATEGORY_COLOR_MAP = {
   cat_education: "#3b82f6",
   cat_travel: "#84cc16",
   cat_investments: "#a855f7",
+  cat_family: "#059669",
+  cat_parents: "#d97706",
+  cat_family_support: "#2563eb",
+  cat_household: "#7c3aed",
+  cat_rent: "#db2777",
+  cat_groceries_bills: "#0891b2",
   cat_other: "#64748b",
 };
 
 const FALLBACK_COLORS = [
   "#10b981", "#6366f1", "#06b6d4", "#f59e0b", "#ec4899",
-  "#8b5cf6", "#f97316", "#14b8a6", "#e11d48", "#3b82f6"
+  "#8b5cf6", "#f97316", "#14b8a6", "#e11d48", "#3b82f6",
+  "#059669", "#d97706", "#2563eb", "#7c3aed", "#db2777"
 ];
 
 function getCategoryColor(cat, idx = 0) {
@@ -49,27 +56,47 @@ function chartThemeColors() {
 }
 
 function filterExpensesByTimeframe(expenses, timeframe) {
+  if (typeof window.filterByDateRange === "function") {
+    return window.filterByDateRange(expenses, timeframe);
+  }
   const now = new Date();
   const currentY = now.getFullYear();
   const currentM = now.getMonth();
 
-  if (timeframe === "month") {
+  if (timeframe === "today") {
+    const todayStr = `${currentY}-${String(currentM + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    return expenses.filter((e) => (e.date || "").startsWith(todayStr));
+  }
+  if (timeframe === "week") {
+    const dayOfWeek = (now.getDay() + 6) % 7;
+    const startOfWeek = new Date(currentY, currentM, now.getDate() - dayOfWeek);
+    const startStr = `${startOfWeek.getFullYear()}-${String(startOfWeek.getMonth() + 1).padStart(2, "0")}-${String(startOfWeek.getDate()).padStart(2, "0")}`;
+    return expenses.filter((e) => (e.date || "").slice(0, 10) >= startStr);
+  }
+  if (timeframe === "month" || timeframe === "this_month") {
     const curMonthStr = `${currentY}-${String(currentM + 1).padStart(2, "0")}`;
     return expenses.filter((e) => (e.date || "").startsWith(curMonthStr));
   }
+  if (timeframe === "last_month" || timeframe === "prev_month") {
+    const lastM = currentM === 0 ? 12 : currentM;
+    const lastY = currentM === 0 ? currentY - 1 : currentY;
+    const lmStr = `${lastY}-${String(lastM).padStart(2, "0")}`;
+    return expenses.filter((e) => (e.date || "").startsWith(lmStr));
+  }
   if (timeframe === "3m") {
     const cutoff = new Date(currentY, currentM - 2, 1);
-    return expenses.filter((e) => new Date(e.date) >= cutoff);
+    const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-01`;
+    return expenses.filter((e) => (e.date || "").slice(0, 10) >= cutoffStr);
   }
   if (timeframe === "6m") {
     const cutoff = new Date(currentY, currentM - 5, 1);
-    return expenses.filter((e) => new Date(e.date) >= cutoff);
+    const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-01`;
+    return expenses.filter((e) => (e.date || "").slice(0, 10) >= cutoffStr);
   }
-  if (timeframe === "year") {
+  if (timeframe === "year" || timeframe === "this_year") {
     const yrStr = `${currentY}-`;
     return expenses.filter((e) => (e.date || "").startsWith(yrStr));
   }
-  // "all"
   return [...expenses];
 }
 
@@ -254,11 +281,37 @@ function renderTrendChart(data, tc) {
 
   const months = [];
   const now = new Date();
-  const numMonths = currentAnalysisTimeframe === "year" ? 12 : 6;
+  const curY = now.getFullYear();
+  const curM = now.getMonth();
 
-  for (let i = numMonths - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push(d.toISOString().slice(0, 7)); // YYYY-MM
+  if (currentAnalysisTimeframe === "year") {
+    // Show months of current year: Jan to Dec (or through max recorded month)
+    for (let m = 0; m <= 11; m++) {
+      months.push(`${curY}-${String(m + 1).padStart(2, "0")}`);
+    }
+  } else if (currentAnalysisTimeframe === "all") {
+    const allSet = new Set();
+    (data.expenses || []).forEach((e) => {
+      if (e.date) allSet.add(e.date.slice(0, 7));
+    });
+    // Ensure current month is included
+    allSet.add(`${curY}-${String(curM + 1).padStart(2, "0")}`);
+    const sorted = Array.from(allSet).sort();
+    if (sorted.length < 6) {
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(curY, curM - i, 1);
+        sorted.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+      }
+    }
+    const uniqueSorted = Array.from(new Set(sorted)).sort();
+    months.push(...uniqueSorted);
+  } else {
+    // Rolling 3 or 6 months ending at current month
+    const numMonths = currentAnalysisTimeframe === "3m" ? 3 : 6;
+    for (let i = numMonths - 1; i >= 0; i--) {
+      const d = new Date(curY, curM - i, 1);
+      months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
   }
 
   const expenseByMonth = {};
@@ -269,7 +322,8 @@ function renderTrendChart(data, tc) {
 
   const monthLabels = months.map((m) => {
     const [y, mo] = m.split("-");
-    return new Date(Number(y), Number(mo) - 1, 1).toLocaleDateString(undefined, { month: "short" });
+    // Day 15 avoids any local/UTC boundary shift
+    return new Date(Number(y), Number(mo) - 1, 15).toLocaleDateString(undefined, { month: "short" });
   });
 
   const expenseValues = months.map((m) => convertFromBase(expenseByMonth[m] || 0));
@@ -324,11 +378,19 @@ function renderTrendChart(data, tc) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: {
+        padding: {
+          left: 4,
+          right: 8,
+          top: 6,
+          bottom: 8,
+        },
+      },
       plugins: {
         legend: {
           position: "top",
           align: "end",
-          labels: { color: tc.text, boxWidth: 12, usePointStyle: true, font: { size: 12, weight: 600 } },
+          labels: { color: tc.text, boxWidth: 12, usePointStyle: true, font: { size: 11, weight: 600 } },
         },
         tooltip: {
           backgroundColor: tc.cardBg,
@@ -364,8 +426,13 @@ function renderTrendChart(data, tc) {
         y: {
           ticks: {
             color: tc.text,
-            font: { size: 11 },
-            callback: (v) => fmtMoney(v, { isDirect: true }),
+            font: { size: 10.5 },
+            callback: (v) => {
+              const cur = typeof getCurrency === "function" ? getCurrency() : { symbol: "$" };
+              if (v >= 1000000) return `${cur.symbol}${(v / 1000000).toFixed(1)}M`;
+              if (v >= 1000) return `${cur.symbol}${(v / 1000).toFixed(0)}k`;
+              return `${cur.symbol}${v}`;
+            },
           },
           grid: { color: tc.grid },
           beginAtZero: true,
@@ -574,10 +641,20 @@ function renderHealthScore(data, expenses) {
   // Calculate Needs vs Wants vs Savings from categories
   let needsTotal = 0;
   let wantsTotal = 0;
-  const needsCats = new Set(["cat_food", "cat_bills", "cat_transport", "cat_health"]);
+  let familyTotal = 0;
+  const needsCats = new Set([
+    "cat_food", "cat_bills", "cat_transport", "cat_health",
+    "cat_family", "cat_parents", "cat_family_support", "cat_household", "cat_rent", "cat_groceries_bills"
+  ]);
+  const familyCats = new Set([
+    "cat_family", "cat_parents", "cat_family_support", "cat_household", "cat_rent", "cat_groceries_bills"
+  ]);
 
   expenses.forEach((e) => {
     const amt = Number(e.amount);
+    if (familyCats.has(e.category)) {
+      familyTotal += amt;
+    }
     if (needsCats.has(e.category)) {
       needsTotal += amt;
     } else {
@@ -625,6 +702,11 @@ function renderHealthScore(data, expenses) {
     badgeText = "Needs Attention";
     badgeClass = "badge-rose";
     advice = "Your expenses are taking up too high a share of your income. Look into reducing high category items.";
+  }
+
+  if (familyTotal > 0 && income > 0) {
+    const famPct = Math.round((familyTotal / income) * 100);
+    advice += ` Family support represents ${famPct}% (${fmtMoney(familyTotal)}) of your income.`;
   }
 
   if (scoreBadgeEl) {
