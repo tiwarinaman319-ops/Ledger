@@ -3,10 +3,8 @@
 .tempmediaStorage/
 *.log
 
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
+# Java compiled classes
+*.class
 
 # OS generated files
 .DS_Store

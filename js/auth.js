@@ -8,6 +8,39 @@ function getUsers() {
 
 function saveUsers(users) {
   localStorage.setItem("ledger_users", JSON.stringify(users));
+  if (window.fetch) {
+    try {
+      fetch("/api/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(users),
+      }).catch((err) => {
+        console.debug("Java backend offline or static mode:", err);
+      });
+    } catch (e) {}
+  }
+}
+
+async function syncUsersWithBackend() {
+  if (!window.fetch) return;
+  try {
+    const res = await fetch("/api/auth/users");
+    if (res.ok) {
+      const serverUsers = await res.json();
+      if (serverUsers && typeof serverUsers === "object" && Object.keys(serverUsers).length > 0) {
+        const local = getUsers();
+        const merged = { ...local, ...serverUsers };
+        localStorage.setItem("ledger_users", JSON.stringify(merged));
+      } else {
+        const local = getUsers();
+        if (local && Object.keys(local).length > 0) {
+          saveUsers(local);
+        }
+      }
+    }
+  } catch (err) {
+    console.debug("Syncing users skipped (offline):", err);
+  }
 }
 
 function setSession(email) {
@@ -158,6 +191,7 @@ window.populateSampleDataForUser = populateSampleDataForUser;
 window.initDemoAccount = initDemoAccount;
 
 document.addEventListener("DOMContentLoaded", () => {
+  syncUsersWithBackend();
   const loginForm = document.getElementById("loginForm");
   const signupForm = document.getElementById("signupForm");
   if (!loginForm && !signupForm) {

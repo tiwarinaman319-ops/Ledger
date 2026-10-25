@@ -122,6 +122,43 @@ function getData() {
 
 function saveData(data) {
   localStorage.setItem(dataKey(), JSON.stringify(data));
+  const email = currentUserEmail();
+  if (email && window.fetch) {
+    try {
+      fetch(`/api/data?email=${encodeURIComponent(email)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }).catch((err) => {
+        console.debug("Java backend offline or static mode:", err);
+      });
+    } catch (e) {}
+  }
+}
+
+async function syncDataWithBackend() {
+  const email = currentUserEmail();
+  if (!email || !window.fetch) return;
+  try {
+    const res = await fetch(`/api/data?email=${encodeURIComponent(email)}`);
+    if (res.ok) {
+      const serverData = await res.json();
+      if (serverData && typeof serverData === "object" && (serverData.expenses || serverData.incomes)) {
+        localStorage.setItem(dataKey(), JSON.stringify(serverData));
+        if (typeof renderDashboard === "function") renderDashboard();
+        if (typeof renderExpensesSection === "function") renderExpensesSection();
+        if (typeof renderGoals === "function") renderGoals();
+        if (window.renderCharts) window.renderCharts();
+      }
+    } else if (res.status === 404) {
+      const current = getData();
+      if (current && ((current.expenses && current.expenses.length > 0) || (current.incomes && current.incomes.length > 0))) {
+        saveData(current);
+      }
+    }
+  } catch (err) {
+    console.debug("Syncing backend data skipped (offline):", err);
+  }
 }
 
 function uid() {
@@ -212,6 +249,9 @@ function switchSection(name, updateHash = true) {
   }
   if (secName === "calculator" && typeof syncBudgetCalcPrefill === "function") {
     syncBudgetCalcPrefill();
+  }
+  if (secName === "settings") {
+    loadJvmTelemetry();
   }
 
   // Scroll to top of content smoothly
@@ -1663,6 +1703,30 @@ function restoreBackupJSON(file) {
   reader.readAsText(file);
 }
 
+async function loadJvmTelemetry() {
+  if (!window.fetch) return;
+  try {
+    const res = await fetch("/api/system/stats");
+    if (res.ok) {
+      const data = await res.json();
+      const elJavaVer = document.getElementById("jvmVersion");
+      const elCpu = document.getElementById("jvmCores");
+      const elRam = document.getElementById("jvmMemory");
+      const elUptime = document.getElementById("jvmUptime");
+      if (elJavaVer) elJavaVer.textContent = `${data.javaVersion} (${data.javaVendor.split(" ")[0]})`;
+      if (elCpu) elCpu.textContent = `${data.cpuCores} Cores · ${data.osName.replace("Windows ", "Win")}`;
+      if (elRam) elRam.textContent = `${data.usedMemoryMB} MB / ${data.totalMemoryMB} MB`;
+      if (elUptime) {
+        const m = Math.floor(data.uptimeSeconds / 60);
+        const s = data.uptimeSeconds % 60;
+        elUptime.textContent = `${m}m ${s}s Uptime`;
+      }
+    }
+  } catch (e) {
+    console.debug("JVM Telemetry skipped (offline):", e);
+  }
+}
+
 /* ===================== INIT ===================== */
 document.addEventListener("DOMContentLoaded", () => {
   if (!currentUserEmail()) {
@@ -1726,6 +1790,39 @@ document.addEventListener("DOMContentLoaded", () => {
       );
     });
   }
+
+  // Java Server Sync & Direct Download Operations
+  const syncServerNowBtn = document.getElementById("syncServerNowBtn");
+  if (syncServerNowBtn) {
+    syncServerNowBtn.addEventListener("click", async () => {
+      syncServerNowBtn.disabled = true;
+      syncServerNowBtn.textContent = "⏳ Syncing...";
+      await syncDataWithBackend();
+      await loadJvmTelemetry();
+      setTimeout(() => {
+        syncServerNowBtn.disabled = false;
+        syncServerNowBtn.textContent = "✅ Synced with Server";
+        setTimeout(() => {
+          syncServerNowBtn.textContent = "🔄 Sync with Server";
+        }, 2000);
+      }, 400);
+    });
+  }
+
+  const exportServerBackupBtn = document.getElementById("exportServerBackupBtn");
+  if (exportServerBackupBtn) {
+    exportServerBackupBtn.addEventListener("click", () => {
+      const email = currentUserEmail();
+      if (email) {
+        window.location.href = `/api/backup/export?email=${encodeURIComponent(email)}`;
+      } else {
+        exportBackupJSON();
+      }
+    });
+  }
+
+  // Load live Java Telemetry
+  loadJvmTelemetry();
 
   // Set default expense date
   const dateInput = document.getElementById("expDate");
@@ -2205,4 +2302,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Route according to URL hash (e.g., #analysis, #calculator)
   handleHashNavigation();
   window.addEventListener("hashchange", handleHashNavigation);
+
+  // Sync data with Java backend
+  syncDataWithBackend();
 });

@@ -54,11 +54,15 @@ cd ledger
 ```
 
 ### 2. Start the Local Server
-Ledger runs with Python's built-in HTTP server:
+Ledger runs with Java's standard HTTP server (`Server.java`):
 
 ```bash
-# Start on port 8080 (includes no-cache headers for instant updates)
-python server.py
+# Compile and run with Java (zero external dependencies required)
+javac Server.java
+java Server
+
+# Or simply run the Windows batch script:
+run.bat
 ```
 
 ### 3. Open in Browser
@@ -74,11 +78,13 @@ Visit **[http://localhost:8080](http://localhost:8080)** (or `http://localhost:8
 ledger/
 ├── index.html          # Authentication portal (Login, Signup, Demo mode)
 ├── app.html            # Main Single Page Application (SPA) dashboard
-├── server.py           # Lightweight development server with no-cache headers
+├── Server.java         # Pure Java HTTP & REST API Backend (Zero Dependencies)
+├── run.bat             # One-click Windows launch script
+├── data/               # Persistent server storage (users.json, ledger_<user>.json)
 ├── css/
 │   └── style.css       # Design system (Glassmorphism, dark/light themes, print CSS)
 ├── js/
-│   ├── auth.js         # User authentication, session management, demo accounts
+│   ├── auth.js         # User authentication with Java backend synchronization
 │   ├── currency.js     # Mathematical multi-currency & Forex market trends engine
 │   ├── ai-assistant.js # Smart AI Financial Copilot and conversational advisor
 │   ├── charts.js       # Chart.js analytics (Cashflow, Category breakdown, 50/30/20)
@@ -89,6 +95,22 @@ ledger/
 └── assets/
     └── icon.svg        # Vector application branding
 ```
+
+---
+
+## ☕ Java REST Backend Architecture
+
+The backend is built in pure Java standard library (`com.sun.net.httpserver`) requiring **zero Maven/Gradle downloads or external jars**:
+
+| Endpoint | Method | Purpose |
+| :--- | :---: | :--- |
+| `/api/status` | `GET` | Health check, JVM version, connected client and storage telemetry |
+| `/api/system/stats` | `GET` | Real-time JVM memory heap, CPU core count, active threads, and uptime metrics |
+| `/api/auth/users` | `GET` / `POST` | Persistent user authentication and registration storage (`data/users.json`) |
+| `/api/data?email=...` | `GET` / `POST` | Persistent financial ledger data per user (`data/ledger_<email>.json`) |
+| `/api/backup/export` | `GET` | Direct HTTP attachment file streaming of user ledger data from server disk |
+| `/api/backup/import` | `POST` | Server-side backup restoration and data integrity check |
+| `/*` | `GET` | Static asset server with full MIME headers and no-cache policies |
 
 ---
 
